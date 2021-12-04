@@ -1,0 +1,54 @@
+* Задание 
+Собрать тег https://github.com/greenplum-db/gpdb/releases/tag/6.18.0 и упаковать по возможности rpm. 
+Результат должен быть так же в виде bash-скрипта или spec-файла для rpm build + read.me как и что запускать.
+* Решение
+  :PROPERTIES:
+  :ID:       238dc270-b31f-4fc8-8acb-4e93102b4140
+  :END:
+  Определяем переменые для скриптов: source scripts/vars.sh [{TAG} [BUILD_DIR]] 
+  #+begin_src sh :mkdirp yes :tangle scripts/vars.sh
+    [ -n "$1" ] && TAG="$1" || TAG="6.18.0"
+    [ -n "$2" ] && BUILD_DIR="$2" || BUILD_DIR="build"
+    FILENAME="${TAG}.tar.gz"
+    ARC_DIR="${BUILD_DIR}/../arc"
+    RPMBUILD_DIR="${BUILD_DIR}../rpmbuild"
+    export TAG
+    export BUILD_DIR
+    export RPMBUILD_DIR
+    export ARC_DIR
+    export FILENAME
+  #+end_src
+  Запускаем скрипт для получения исходных кодов для сборки: ./scripts/get-src.sh
+  #+begin_src sh :mkdirp yes :tangle scripts/get-src.sh :shebang #!/usr/bin/env bash
+    mkdir -p "${ARC_DIR}"
+    wget -nc "https://github.com/greenplum-db/gpdb/archive/refs/tags/${FILENAME}" -O "${ARC_DIR}/${FILENAME}"
+    mkdir -p "${BUILD_DIR}"
+    tar -xf "${ARC_DIR}/${FILENAME}" -C "${BUILD_DIR}"
+  #+end_src
+  Устанавливаем зависимости: ./scripts/prepare.sh
+  #+begin_src sh :mkdirp yes :tangle scripts/prepare.sh :shebang #!/usr/bin/env bash
+    sudo yum install --enablerepo=powertools -y apr-devel bison bzip2-devel cmake3 flex gcc gcc-c++ krb5-devel libcurl-devel libevent-devel libkadm5 libyaml-devel libxml2-devel libzstd-devel openssl-devel perl-ExtUtils-Embed python2-devel python2-pip readline-devel xerces-c-devel zlib-devel
+
+    sudo pip2 install conan
+    (cd "${BUILD_DIR}/gpdb-${TAG}" && sudo pip2 install -r python-dependencies.txt && sudo pip2 install -r python-developer-dependencies.txt)
+  #+end_src
+  Конфигурируем, компилируем и устанавливаем: ./scripts/make-bin.sh
+  #+begin_src sh :mkdirp yes :tangle scripts/make-bin.sh :shebang #!/usr/bin/env bash
+    (cd "${BUILD_DIR}/gpdb-${TAG}" && ./configure --disable-orca --with-perl --with-python --with-libxml --with-gssapi --prefix=/usr/local/gpdb && make -j 6 && sudo cp /usr/bin/python2 /usr/bin/python && sudo make install)
+  #+end_src
+  Подготавливаем репозиторий: ./scripts/make-repo.sh
+  #+begin_src sh :tangle scripts/make-repo.sh :shebang #!/usr/bin/env bash
+    mkdir -p ${RPMBUILD_DIR}/{BUILD,BUILDROOT,REPO/Packages,RPMS,SOURCES,SPECS,SRPMS}
+
+    sudo yum -y install pinentry createrepo_c
+
+    gpg --export -a 'avkutenev' > ${RPMBUILD_DIR}/REPO/RPM-GPG-KEY-avkutenev
+  #+end_src
+  Настраиваем файл для подписи пакетов: cp config/rpmmacros ~/.rpmmacros
+  #+begin_src conf :mkdirp yes :tangle config/rpmmacros
+    %_signature gpg
+    %_gpg_path ~/.gnupg
+    %_gpg_name avkutenev
+    %_gpgbin /usr/bin/gpg
+  #+end_src
+  
